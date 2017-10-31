@@ -26,7 +26,8 @@ def conv2d(x, W):
 
 
 def max_pool_2x2(x):
-    return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="SAME")
+    return tf.nn.max_pool(
+        x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="SAME")
 
 
 W_conv1 = weight_variable([5, 5, 1, 32])
@@ -76,18 +77,36 @@ for i in range(num_steps):
     train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.5})
 
     if i % display_every == 0:
-        train_accuracy = accuracy.eval(
-            feed_dict={x: batch[0], y_: batch[1], keep_prob: 1.0})
+        train_accuracy = accuracy.eval(feed_dict={
+            x: batch[0],
+            y_: batch[1],
+            keep_prob: 1.0
+        })
         end_time = time.time()
-        print("step {0}, elapsed time {1:.2f} seconds, training accuracy {2:.3f}%".format(
-            i, end_time - start_time, train_accuracy * 100.0))
+        print(
+            "step {0}, elapsed time {1:.2f} seconds, training accuracy {2:.3f}%".
+            format(i, end_time - start_time, train_accuracy * 100.0))
 
 end_time = time.time()
 print("Total training time for {0} batches: {1:.2f} seconds".format(
     i + 1, end_time - start_time))
 
-print("Test accuracy {0:.3f}%".format(accuracy.eval(feed_dict={ \
-    x: mnist.test.images, y_: mnist.test.labels, keep_prob: 1.0 \
-}) * 100.0))
+# This doesn't work on GPU as runs out of memory
+# print("Test accuracy {0:.3f}%".format(accuracy.eval(feed_dict={ \
+#     x: mnist.test.images, y_: mnist.test.labels, keep_prob: 1.0 \
+# }) * 100.0))
+
+accuracy_sum = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
+good = 0
+total = 0
+for i in range(10):
+    testSet = mnist.test.next_batch(50)
+    good += accuracy_sum.eval(feed_dict={
+        x: testSet[0],
+        y_: testSet[1],
+        keep_prob: 1.0
+    })
+    total += testSet[0].shape[0]
+print("test accuracy {0:.3f}%".format(good / total * 100.0))
 
 sess.close()
