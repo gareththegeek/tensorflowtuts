@@ -3,6 +3,20 @@ from tensorflow.examples.tutorials.mnist import input_data
 
 logPath = "./tb_logs/"
 
+
+def variable_summaries(var):
+    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+    with tf.name_scope('summaries'):
+        mean = tf.reduce_mean(var)
+        tf.summary.scalar('mean', mean)
+        with tf.name_scope('stddev'):
+            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.summary.scalar('stddev', stddev)
+        tf.summary.scalar('max', tf.reduce_max(var))
+        tf.summary.scalar('min', tf.reduce_min(var))
+        tf.summary.histogram('histogram', var)
+
+
 mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
 sess = tf.InteractiveSession()
@@ -13,36 +27,55 @@ with tf.name_scope("MNIST_Input"):
 
 with tf.name_scope("Input_Reshape"):
     x_image = tf.reshape(x, [-1, 28, 28, 1], name="x_image")
+    tf.summary.image("input_img", x_image, 5)
 
 
 def weight_variable(shape):
-    initial = tf.truncated_normal(shape, stddev=0.1)
-    return tf.Variable(initial, name="weight")
+    with tf.name_scope("weights"):
+        initial = tf.truncated_normal(shape, stddev=0.1)
+        variable_summaries(initial)
+        return tf.Variable(initial, name="weight")
 
 
 def bias_variable(shape):
-    initial = tf.constant(0.1, shape=shape)
-    return tf.Variable(initial, name="bias")
+    with tf.name_scope("biases"):
+        initial = tf.constant(0.1, shape=shape)
+        variable_summaries(initial)
+        return tf.Variable(initial, name="bias")
 
 
 def conv2d(x, W):
-    return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="SAME", name="conv2d")
+    return tf.nn.conv2d(
+        x, W, strides=[1, 1, 1, 1], padding="SAME", name="conv2d")
 
 
 def max_pool_2x2(x):
-    return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="SAME", name="pool")
+    return tf.nn.max_pool(
+        x,
+        ksize=[1, 2, 2, 1],
+        strides=[1, 2, 2, 1],
+        padding="SAME",
+        name="pool")
+
+
+def relu(input, weights, bias):
+    conv_wx_b = conv2d(input, weights) + bias
+    tf.summary.histogram("conv_wx_b", conv_wx_b)
+    result = tf.nn.relu(conv_wx_b, name="relu")
+    tf.summary.histogram("conv", result)
+    return result
 
 
 with tf.name_scope("Conv1"):
     W_conv1 = weight_variable([5, 5, 1, 32])
     b_conv1 = bias_variable([32])
-    h_conv1 = tf.nn.relu(conv2d(x_image, W_conv1) + b_conv1, name="relu")
+    h_conv1 = relu(x_image, W_conv1, b_conv1)
     h_pool1 = max_pool_2x2(h_conv1)
 
 with tf.name_scope("Conv2"):
     W_conv2 = weight_variable([5, 5, 32, 64])
     b_conv2 = bias_variable([64])
-    h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2, name="relu")
+    h_conv2 = relu(h_pool1, W_conv2, b_conv2)
     h_pool2 = max_pool_2x2(h_conv2)
 
 with tf.name_scope("FC"):
@@ -71,6 +104,11 @@ with tf.name_scope("accuracy"):
     correct_prediction = tf.equal(tf.argmax(y_conv, 1), tf.argmax(y_, 1))
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
+tf.summary.scalar("cross_entropy_scl", cross_entropy)
+tf.summary.scalar("training_accuracy", accuracy)
+
+summarise_all = tf.summary.merge_all()
+
 sess.run(tf.global_variables_initializer())
 
 tbWriter = tf.summary.FileWriter(logPath, sess.graph)
@@ -84,21 +122,47 @@ end_time = time.time()
 
 for i in range(num_steps):
     batch = mnist.train.next_batch(50)
-    train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.5})
+    #train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.5})
+    _, summary = sess.run(
+        [train_step, summarise_all],
+        feed_dict={
+            x: batch[0],
+            y_: batch[1],
+            keep_prob: 0.5
+        })
 
     if i % display_every == 0:
-        train_accuracy = accuracy.eval(
-            feed_dict={x: batch[0], y_: batch[1], keep_prob: 1.0})
+        train_accuracy = accuracy.eval(feed_dict={
+            x: batch[0],
+            y_: batch[1],
+            keep_prob: 1.0
+        })
         end_time = time.time()
-        print("step {0}, elapsed time {1:.2f} seconds, training accuracy {2:.3f}%".format(
-            i, end_time - start_time, train_accuracy * 100.0))
+        print(
+            "step {0}, elapsed time {1:.2f} seconds, training accuracy {2:.3f}%".
+            format(i, end_time - start_time, train_accuracy * 100.0))
+        tbWriter.add_summary(summary, i)
 
 end_time = time.time()
 print("Total training time for {0} batches: {1:.2f} seconds".format(
     i + 1, end_time - start_time))
 
-print("Test accuracy {0:.3f}%".format(accuracy.eval(feed_dict={
-    x: mnist.test.images, y_: mnist.test.labels, keep_prob: 1.0
-}) * 100.0))
+# This doesn't work on GPU as runs out of memory
+# print("Test accuracy {0:.3f}%".format(accuracy.eval(feed_dict={ \
+#     x: mnist.test.images, y_: mnist.test.labels, keep_prob: 1.0 \
+# }) * 100.0))
+
+accuracy_sum = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
+good = 0
+total = 0
+for i in range(10):
+    testSet = mnist.test.next_batch(50)
+    good += accuracy_sum.eval(feed_dict={
+        x: testSet[0],
+        y_: testSet[1],
+        keep_prob: 1.0
+    })
+    total += testSet[0].shape[0]
+print("test accuracy {0:.3f}%".format(good / total * 100.0))
 
 sess.close()
